@@ -146,10 +146,9 @@ class Pulse(object):
         return d
 
     def beff(
-        self, loc: Tensor, *,
-        Δf: Optional[Tensor] = None,
-        b1Map: Optional[Tensor] = None,
-        γ: Tensor = γH
+            self, loc: Tensor, *,
+            Δf: Optional[Tensor] = None, b1Map: Optional[Tensor] = None,
+            γ: Tensor = γH
     ) -> Tensor:
         r"""Compute B-effective of provided location from the pulse
 
@@ -166,13 +165,11 @@ class Pulse(object):
         """
         device = self.device
         loc = loc.to(device=device)
-        fn = lambda x: None if x is None else x.to(device=device)
+        fn = lambda x: None if x is None else x.to(device=device)  # noqa: E731
         Δf, b1Map, γ = (fn(x) for x in (Δf, b1Map, γ))
 
-        rf, gr = self.rf, self.gr
-        beff = beffective.rfgr2beff(rf, gr, loc, Δf=Δf, b1Map=b1Map, γ=γ)
-
-        return beff
+        return beffective.rfgr2beff(self.rf, self.gr, loc,
+                                    Δf=Δf, b1Map=b1Map, γ=γ)
 
     def interpT(self, dt: Tensor, *, kind: str = 'linear') -> 'Pulse':
         r""" Interpolate pulse of `dt` by `kind`.
@@ -200,8 +197,9 @@ class Pulse(object):
         dkw = {'device': self.device, 'dtype': self.dtype}
         kw = {'axis': axis, 'kind': kind, 'copy': False, 'assume_sorted': True}
 
-        f_np = lambda x: x.detach().cpu().numpy()
-        f_0 = lambda x: np.dstack((np.zeros_like(x[:, :, [0]]), x))
+        f_np = lambda x: x.detach().cpu().numpy()  # noqa: E731
+        f_0 = lambda x: np.dstack((np.zeros_like(x[:, :, [0]]),  # noqa: E731
+                                   x))
 
         # convert to np array, then prepend 0's.
         rf_np, gr_np = f_0(f_np(self.rf)), f_0(f_np(self.gr))
