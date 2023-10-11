@@ -1,8 +1,7 @@
 r"""Classes for MRI excitation simulations
 """
 import copy
-from typing import Optional
-import inspect
+from typing import TypeVar, Optional
 
 import numpy as np
 from scipy import interpolate
@@ -11,6 +10,17 @@ from torch import tensor, Tensor
 
 from mrphy import γH, dt0, gmax0, smax0, rfmax0, T1G, T2G, π
 from mrphy import utils, beffective, sims
+import math
+
+# TODO:
+# - Abstract Class
+# - Non-compact SpinCube initialization
+
+
+Pulse = TypeVar('Pulse', bound='Pulse')
+SpinArray = TypeVar('SpinArray', bound='SpinArray')
+SpinCube = TypeVar('SpinCube', bound='SpinCube')
+
 
 __all__ = ['Pulse', 'SpinArray', 'SpinCube', 'Examples']
 
@@ -19,8 +29,7 @@ class Pulse(object):
     r"""Pulse object of RF and GR
 
     Usage:
-        ``pulse = Pulse(rf, gr, *, dt, gmax, smax, rfmax, desc, device,``\
-        `` dtype)``
+        ``pulse = Pulse(;rf, gr, dt, gmax, smax, rfmax, desc, device, dtype)``
 
     Inputs:
         - ``rf``: `(N,xy, nT,(nCoils))` "Gauss", ``xy`` for separating real \
@@ -55,14 +64,14 @@ class Pulse(object):
     __slots__ = set(_readonly + _limits + ('rf', 'gr', 'dt', 'desc'))
 
     def __init__(
-        self,
-        rf: Optional[Tensor] = None, gr: Optional[Tensor] = None, *,
-        dt: Tensor = dt0,
-        gmax: Tensor = gmax0, smax: Tensor = smax0, rfmax: Tensor = rfmax0,
-        desc: str = "generic pulse",
-        device: torch.device = torch.device('cpu'),
-        dtype: torch.dtype = torch.float32
-    ):
+            self,
+            rf: Optional[Tensor] = None, gr: Optional[Tensor] = None,
+            dt: Tensor = dt0,
+            gmax: Tensor = gmax0, smax: Tensor = smax0, rfmax: Tensor = rfmax0,
+            desc: str = "generic pulse",
+            device: torch.device = torch.device('cpu'),
+            dtype: torch.dtype = torch.float32):
+
         assert(isinstance(device, torch.device) and
                isinstance(dtype, torch.dtype))
 
@@ -70,9 +79,9 @@ class Pulse(object):
         rf_miss, gr_miss = rf is None, gr is None
         assert (not(rf_miss and gr_miss)), "Missing both `rf` and `gr` inputs"
 
-        object.__setattr__(self, 'device', device)
-        object.__setattr__(self, 'dtype', dtype)
-        object.__setattr__(self, 'is_cuda', self.device.type == 'cuda')
+        super().__setattr__('device', device)
+        super().__setattr__('dtype', dtype)
+        super().__setattr__('is_cuda', self.device.type == 'cuda')
 
         kw = {'device': self.device, 'dtype': self.dtype}
 
@@ -85,7 +94,7 @@ class Pulse(object):
                 gr = torch.zeros((N, 3, nT), **kw)
             else:
                 assert (N == gr.shape[0] and nT == gr.shape[2])
-        object.__setattr__(self, 'shape', torch.Size((N, 1, nT)))
+        super().__setattr__('shape', torch.Size((N, 1, nT)))
 
         self.rf, self.gr = rf.to(**kw), gr.to(**kw)
         self.dt, self.gmax, self.smax, self.rfmax = dt, gmax, smax, rfmax
@@ -93,15 +102,9 @@ class Pulse(object):
         return
 
     def __setattr__(self, k, v):
-        if 'deepcopy' in (_.function for _ in inspect.stack()):
-            # Hack, this enables `deepcopy()` w/o overriding `__deepcopy__()`.
-            # Generator is faster than list comprehension.
-            object.__setattr__(self, k, v)
-            return
-
         if k in self._readonly:
             raise AttributeError(f"'Pulse' object attribute '{k}'"
-                                 " is read-only")
+                                  " is read-only")
 
         if k != 'desc':
             kw = {'device': self.device, 'dtype': self.dtype}
@@ -121,14 +124,14 @@ class Pulse(object):
                 v = v[None]
             assert(v.ndim == 1)
 
-        object.__setattr__(self, k, v)
+        super().__setattr__(k, v)
         return
 
-    def asdict(self, *, toNumpy: bool = True) -> dict:
+    def asdict(self, toNumpy: bool = True) -> dict:
         r"""Convert mrphy.mobjs.Pulse object to dict
 
         Usage:
-            ``d = pulse.asdict(*, toNumpy)``
+            ``d = pulse.asdict(; toNumpy)``
 
         Inputs:
             - ``toNumpy``: [T/f], convert Tensor to Numpy arrays.
@@ -146,14 +149,13 @@ class Pulse(object):
         return d
 
     def beff(
-            self, loc: Tensor, *,
+            self, loc: Tensor,
             Δf: Optional[Tensor] = None, b1Map: Optional[Tensor] = None,
-            γ: Tensor = γH
-    ) -> Tensor:
+            γ: Tensor = γH) -> Tensor:
         r"""Compute B-effective of provided location from the pulse
 
         Usage:
-            ``beff = pulse.beff(loc, *, Δf, b1Map, γ)``
+            ``beff = pulse.beff(loc; Δf, b1Map, γ)``
         Inputs:
             - ``loc``: `(N,*Nd,xyz)`, "cm", locations.
         Optionals:
@@ -171,21 +173,19 @@ class Pulse(object):
         return beffective.rfgr2beff(self.rf, self.gr, loc,
                                     Δf=Δf, b1Map=b1Map, γ=γ)
 
-    def interpT(self, dt: Tensor, *, kind: str = 'linear') -> 'Pulse':
+    def interpT(self, dt: Tensor, kind: str = 'linear') -> Pulse:
         r""" Interpolate pulse of `dt` by `kind`.
 
         Usage:
-            ``new_pulse = pulse.interpT(dt, *, kind)``
+            ``new_pulse = pulse.interpT(dt; kind)``
         Inputs:
-            - ``dt``: `(1,)`, "Sec", new simulation dwell time.
+            - ``dt``: `(N,1)`, "Sec" simulation temporal step size, dwell time.
             - ``kind``: str, passed to scipy.interpolate.interp1d.
         Outputs:
             - ``new_pulse``: mrphy.mobjs.Pulse object.
 
         .. note::
-            This method requires both `dt` and `self.dt` to be unique/global,
-            i.e., of shape ``(1,)``, which ensures pulse length to be the same
-            within a batch after interpolation.
+            This method requires both `dt` and `self.dt` to be unique/global.
         """
         assert(self.dt.numel() == dt.numel() == 1)
 
@@ -195,11 +195,10 @@ class Pulse(object):
 
         axis = 2  # Along temporal dimension
         dkw = {'device': self.device, 'dtype': self.dtype}
-        kw = {'axis': axis, 'kind': kind, 'copy': False, 'assume_sorted': True}
+        kw = {'axis':axis, 'kind':kind, 'copy':False, 'assume_sorted':True}
 
         f_np = lambda x: x.detach().cpu().numpy()  # noqa: E731
-        f_0 = lambda x: np.dstack((np.zeros_like(x[:, :, [0]]),  # noqa: E731
-                                   x))
+        f_0 = lambda x: np.dstack((np.zeros_like(x[:,:,[0]]), x))  # noqa: E731
 
         # convert to np array, then prepend 0's.
         rf_np, gr_np = f_0(f_np(self.rf)), f_0(f_np(self.gr))
@@ -217,34 +216,32 @@ class Pulse(object):
         desc = f"{self.desc} + interpT\'ed: dt = {dt_n_np}"
         return Pulse(rf_n, gr_n, dt=dt, desc=desc, **dkw)
 
-    def to(
-        self, *,
-        device: torch.device = torch.device('cpu'),
-        dtype: torch.dtype = torch.float32
-    ) -> 'Pulse':
+    def to(self, device: torch.device = torch.device('cpu'),
+           dtype: torch.dtype = torch.float32) -> Pulse:
         r"""Duplicate the object to the prescribed device with dtype
 
         Usage:
-            ``new_pulse = pulse.to(*, device, dtype)``
+            ``new_pulse = pulse.to(;device, dtype)``
         Inputs:
             - ``device``: torch.device
             - ``dtype``: torch.dtype
         Outputs:
             - ``new_pulse``: mrphy.mobjs.Pulse object.
         """
-        if self.device == device and self.dtype == dtype:
+        if (self.device != device) or (self.dtype != dtype):
+            return Pulse(self.rf, self.gr, dt=self.dt, desc=self.desc,
+                         device=device, dtype=dtype)
+        else:
             return self
-        return Pulse(self.rf, self.gr, dt=self.dt, desc=self.desc,
-                     device=device, dtype=dtype)
+        return
 
 
 class SpinArray(object):
     r"""mrphy.mobjs.SpinArray object
 
     Usage:
-        ``spinarray = SpinArray(shape, mask, *, T1_, T2_, γ_, M_, device,``\
-        `` dtype)``
-        ``spinarray = SpinArray(shape, mask, *, T1, T2, γ, M, device, dtype)``
+        ``spinarray = SpinArray(shape; mask, T1_, T2_, γ_, M_, device, dtype)``
+        ``spinarray = SpinArray(shape; mask, T1, T2, γ, M, device, dtype)``
     Inputs:
         - ``shape``: tuple, e.g., ``(N, nx, ny, nz)``.
     Optionals:
@@ -262,7 +259,7 @@ class SpinArray(object):
         - ``device``.
         - ``dtype``.
         - ``ndim``: ``len(shape)``
-        - ``nM``: ``nM = torch.count_nonzero(mask).item()``.
+        - ``nM``: ``nM = mask.sum().item()``;
         - ``T1_``: `(N, nM)`, "Sec", T1 relaxation coeff.
         - ``T2_``: `(N, nM)`, "Sec", T2 relaxation coeff.
         - ``γ_``: `(N, nM)`, "Hz/Gauss", gyro ratio.
@@ -300,14 +297,13 @@ class SpinArray(object):
     __slots__ = set(_readonly + _compact)
 
     def __init__(
-        self, shape: tuple, mask: Optional[Tensor] = None, *,
-        T1: Optional[Tensor] = None, T1_: Optional[Tensor] = None,
-        T2: Optional[Tensor] = None, T2_: Optional[Tensor] = None,
-        γ: Optional[Tensor] = None,  γ_: Optional[Tensor] = None,
-        M: Optional[Tensor] = None,  M_: Optional[Tensor] = None,
-        device: torch.device = torch.device('cpu'),
-        dtype: torch.dtype = torch.float32
-    ):
+            self, shape: tuple, mask: Optional[Tensor] = None,
+            T1: Optional[Tensor] = None, T1_: Optional[Tensor] = None,
+            T2: Optional[Tensor] = None, T2_: Optional[Tensor] = None,
+            γ: Optional[Tensor] = None,  γ_: Optional[Tensor] = None,
+            M: Optional[Tensor] = None,  M_: Optional[Tensor] = None,
+            device: torch.device = torch.device('cpu'),
+            dtype: torch.dtype = torch.float32):
 
         mask = (torch.ones((1,)+shape[1:], dtype=torch.bool, device=device)
                 if mask is None else mask.to(device=device))
@@ -317,13 +313,13 @@ class SpinArray(object):
                mask.dtype == torch.bool and
                mask.shape == (1,)+shape[1:])
 
-        object.__setattr__(self, 'shape', shape)
-        object.__setattr__(self, 'mask', mask)
-        object.__setattr__(self, 'ndim', len(shape))
-        object.__setattr__(self, 'nM', torch.count_nonzero(mask).item())
-        object.__setattr__(self, 'device', device)
-        object.__setattr__(self, 'dtype', dtype)
-        object.__setattr__(self, 'is_cuda', self.device.type == 'cuda')
+        super().__setattr__('shape', shape)
+        super().__setattr__('mask', mask)
+        super().__setattr__('ndim', len(shape))
+        super().__setattr__('nM', torch.sum(mask).item())
+        super().__setattr__('device', device)
+        super().__setattr__('dtype', dtype)
+        super().__setattr__('is_cuda', self.device.type == 'cuda')
 
         assert((T1 is None) or (T1_ is None))
         if T1 is None:
@@ -351,7 +347,7 @@ class SpinArray(object):
 
         return
 
-    def __getattr__(self, k):  # provoked only when `__getattribute__` failed
+    def __getattr__(self, k):
         if k+'_' not in self._compact:
             raise AttributeError(f"'SpinArray' has no attribute '{k}'")
 
@@ -360,15 +356,9 @@ class SpinArray(object):
                 v_.reshape(self.shape+v_.shape[2:]))  # ``mask`` is all True
 
     def __setattr__(self, k_, v_):
-        if 'deepcopy' in (_.function for _ in inspect.stack()):
-            # Hack, this enables `deepcopy()` w/o overriding `__deepcopy__()`.
-            # Generator is faster than list comprehension.
-            object.__setattr__(self, k_, v_)
-            return
-
-        if k_ in self._readonly:
+        if (k_ in self._readonly) or (k_+'_' in self._readonly):
             raise AttributeError(f"'SpinArray' object attribute '{k_}'"
-                                 " is read-only")
+                                  " is read-only")
 
         # Transfer ``v_`` to ``kw`` before ``extract`
         kw = {'device': self.device, 'dtype': self.dtype}
@@ -386,40 +376,33 @@ class SpinArray(object):
         elif k_ in self._compact:  # (T1_, T2_, γ_)
             v_ = v_.expand((self.shape[0], self.nM))  # (N, nM)
 
-        object.__setattr__(self, k_, v_)
+        super().__setattr__(k_, v_)
         return
 
     def applypulse(
-        self, pulse: Pulse, *,
-        doEmbed: bool = False, doRelax: bool = True, doUpdate: bool = False,
-        loc: Optional[Tensor] = None, loc_: Optional[Tensor] = None,
-        Δf: Optional[Tensor] = None, Δf_: Optional[Tensor] = None,
-        b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None
-    ) -> Tensor:
+            self, pulse: Pulse, doEmbed: bool = False, doRelax: bool = True,
+            loc: Optional[Tensor] = None, loc_: Optional[Tensor] = None,
+            Δf: Optional[Tensor] = None, Δf_: Optional[Tensor] = None,
+            b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None
+            ) -> Tensor:
         r"""Apply a pulse to the spinarray object
 
         Typical usage:
-            ``M = spinarray.applypulse(pulse, *, loc, doEmbed=True, doRelax,``\
-            `` doUpdate, Δf, b1Map)``
-            ``M_ = spinarray.applypulse(pulse, *, loc_, doEmbed=False, `` \
-            ``doRelax, doUpdate, Δf_, b1Map_)``
+            ``M = spinarray.applypulse(pulse; loc, doEmbed=True, doRelax, ``\
+            ``Δf, b1Map)``
+            ``M_ = spinarray.applypulse(pulse; loc_, doEmbed=False, `` \
+            ``doRelax, Δf_, b1Map_)``
         Inputs:
             - ``pulse``: mrphy.mobjs.Pulse.
             - ``loc`` ⊻ ``loc_``: `(N,*Nd ⊻ nM,xyz)`, "cm", locations.
         Optionals:
             - ``doEmbed``: [t/F], return ``M`` or ``M_``
             - ``doRelax``: [T/f], do relaxation during Bloch simulation.
-            - ``doUpdate``: [t/F], update ``self.M_``
             - ``Δf``⊻ ``Δf_``: `(N,*Nd ⊻ nM)`, "Hz", off-resonance.
             - ``b1Map`` ⊻ ``b1Map_``: `(N,*Nd ⊻ nM,xy,(nCoils))`, transmit \
               sensitivity.
         Outputs:
             - ``M`` ⊻ ``M_``: `(N,*Nd ⊻ nM,xyz)`
-
-        .. note::
-            When ``doUpdate == True and doEmbed == False``, the output compact
-            magnetization Tensor is a reference to ``self.M_``, and needs
-            caution when being accessed.
         """
         assert ((loc_ is None) != (loc is None))  # XOR
         loc_ = (loc_ if loc is None else self.extract(loc))
@@ -442,16 +425,72 @@ class SpinArray(object):
         kw_bsim['dt'] = pulse.dt
 
         M_ = sims.blochsim(self.M_, beff_, **kw_bsim)
-        if doUpdate:
-            self.M_ = M_
         M_ = (self.embed(M_) if doEmbed else M_)
         return M_
+        
+    def applypulse_ss(
+            self, pulse: Pulse, doEmbed: bool = False, doRelax: bool = True,
+            loc: Optional[Tensor] = None, loc_: Optional[Tensor] = None,
+            Δf: Optional[Tensor] = None, Δf_: Optional[Tensor] = None,
+            b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None,
+            alpha: float=15, Tr:float=55e-3
+            ) -> Tensor:
+        r"""Apply a pulse to the spinarray object
 
-    def asdict(self, *, toNumpy: bool = True, doEmbed: bool = True) -> dict:
+        Typical usage:
+            ``M = spinarray.applypulse(pulse; loc, doEmbed=True, doRelax, ``\
+            ``Δf, b1Map)``
+            ``M_ = spinarray.applypulse(pulse; loc_, doEmbed=False, `` \
+            ``doRelax, Δf_, b1Map_)``
+        Inputs:
+            - ``pulse``: mrphy.mobjs.Pulse.
+            - ``loc`` ⊻ ``loc_``: `(N,*Nd ⊻ nM,xyz)`, "cm", locations.
+        Optionals:
+            - ``doEmbed``: [t/F], return ``M`` or ``M_``
+            - ``doRelax``: [T/f], do relaxation during Bloch simulation.
+            - ``Δf``⊻ ``Δf_``: `(N,*Nd ⊻ nM)`, "Hz", off-resonance.
+            - ``b1Map`` ⊻ ``b1Map_``: `(N,*Nd ⊻ nM,xy,(nCoils))`, transmit \
+              sensitivity.
+        Outputs:
+            - ``M`` ⊻ ``M_``: `(N,*Nd ⊻ nM,xyz)`
+        """
+        assert ((loc_ is None) != (loc is None))  # XOR
+        loc_ = (loc_ if loc is None else self.extract(loc))
+
+        assert ((Δf_ is None) or (Δf is None))
+        Δf_ = (Δf_ if Δf is None else self.extract(Δf))
+
+        assert ((b1Map_ is None) or (b1Map is None))
+        b1Map_ = (b1Map_ if b1Map is None else self.extract(b1Map))
+
+        beff_ = self.pulse2beff(pulse, loc_=loc_,
+                                Δf_=Δf_, b1Map_=b1Map_, doEmbed=False)
+
+        if doRelax:
+            kw_bsim = {'T1': self.T1_, 'T2': self.T2_}
+        else:
+            kw_bsim = {'T1': None, 'T2': None}
+
+        kw_bsim['γ'] = self.γ_
+        kw_bsim['dt'] = pulse.dt
+
+        M_ = sims.blochsim(self.M_, beff_, **kw_bsim)
+        M_=torch.nan_to_num(M_)
+        M_ss=torch.zeros(M_.shape,device=M_.device)
+        T1=1.3
+        E1=math.exp(-Tr/T1)
+        Beta=torch.arctan(((M_[...,0]**2+M_[...,1]**2).sqrt())/M_[...,2])
+        M_ss[...,2]=(1-E1)/(1-torch.cos(Beta)*E1*math.cos(math.radians(alpha)))
+        #M_ss[...,0]=M_ss[...,2]*torch.tan(Beta)
+        
+        M_ss = (self.embed(M_ss) if doEmbed else M_ss)
+        return M_ss
+
+    def asdict(self, toNumpy: bool = True, doEmbed: bool = True) -> dict:
         r"""Convert mrphy.mobjs.SpinArray object to dict
 
         Usage:
-            ``d = spinarray.asdict(*, toNumpy, doEmbed)``
+            ``d = spinarray.asdict(;toNumpy, doEmbed)``
 
         Inputs:
             - ``toNumpy``: [T/f], convert ``Tensor`` to Numpy arrays.
@@ -507,11 +546,11 @@ class SpinArray(object):
         """
         return len(self.shape)
 
-    def embed(self, v_: Tensor, *, out: Optional[Tensor] = None) -> Tensor:
+    def embed(self, v_: Tensor, out: Optional[Tensor] = None) -> Tensor:
         """Embed compact data into the spinarray.mask
 
         Usage:
-            ``out = spinarray.embed(v_, *, out)``
+            ``out = spinarray.embed(v_; out)``
         Inputs:
             - ``v_``: `(N, nM, ...)`, must be contiguous.
         Optionals:
@@ -527,11 +566,11 @@ class SpinArray(object):
         # out[mask] = v_.reshape((-1,)+v_.shape[2:])
         return out
 
-    def extract(self, v: Tensor, *, out_: Optional[Tensor] = None) -> Tensor:
+    def extract(self, v: Tensor, out_: Optional[Tensor] = None) -> Tensor:
         r"""Extract data with the spinarray.mask, making it compact
 
         Usage:
-            ``out_ = spinarray.extract(v, *, out_)``
+            ``out_ = spinarray.extract(v; out_)``
         Inputs:
             - ``v``: `(N, *Nd, ...)`.
         Optionals:
@@ -550,46 +589,7 @@ class SpinArray(object):
         # out_.copy_(v[mask].reshape((-1,)+v.shape[self.ndim:]))
         return out_
 
-    def freeprec(
-        self, dur: Tensor, *,
-        doEmbed: bool = False, doRelax: bool = True, doUpdate: bool = False,
-        Δf: Optional[Tensor] = None, Δf_: Optional[Tensor] = None
-    ) -> Tensor:
-        r"""Free precession of duration ``dur``
-
-        Typical usage:
-            ``M = obj.freeprec(dur, doEmbed=True, doRelax, doUpdate, Δf)``
-            ``M_ = obj.applypulse(dur, doEmbed=False, doRelax, doUpdate, Δf_)``
-        Inputs:
-            - ``dur``: `()` ⊻ `(N ⊻ 1,)`, "Sec", duration of free-precession.
-        Optionals:
-            - ``doEmbed``: [t/F], return ``M`` or ``M_``
-            - ``doRelax``: [T/f], do relaxation during free precession.
-            - ``doUpdate``: [t/F], update ``self.M_``
-            - ``Δf``⊻ ``Δf_``: `(N ⊻ 1,*Nd ⊻ nM)`, "Hz", off-resonance.
-        Outputs:
-            - ``M`` ⊻ ``M_``: `(N,*Nd ⊻ nM,xyz)`
-
-        .. note::
-            When ``doUpdate == True and doEmbed == False``, the output compact
-            magnetization Tensor is a reference to ``self.M_``, and needs
-            caution when being accessed.
-        """
-        assert ((Δf_ is None) or (Δf is None))
-        Δf_ = (Δf_ if Δf is None else self.extract(Δf))
-
-        if doRelax:
-            kw_bsim = {'T1': self.T1_, 'T2': self.T2_}
-        else:
-            kw_bsim = {'T1': None, 'T2': None}
-
-        M_ = sims.freeprec(self.M_, dur, **kw_bsim, Δf=Δf_)
-        if doUpdate:
-            self.M_ = M_
-        M_ = (self.embed(M_) if doEmbed else M_)
-        return M_
-
-    def mask_(self, *, mask: Tensor) -> Tensor:
+    def mask_(self, mask: Tensor) -> Tensor:
         r"""Extract the compact region of an input external ``mask``.
 
         Usage:
@@ -615,17 +615,17 @@ class SpinArray(object):
         return self.mask.numel()
 
     def pulse2beff(
-        self, pulse: Pulse, *, doEmbed: bool = False,
-        loc: Optional[Tensor] = None, loc_: Optional[Tensor] = None,
-        Δf: Optional[Tensor] = None, Δf_: Optional[Tensor] = None,
-        b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None
-    ) -> Tensor:
+            self, pulse: Pulse, doEmbed: bool = False,
+            loc: Optional[Tensor] = None, loc_: Optional[Tensor] = None,
+            Δf: Optional[Tensor] = None, Δf_: Optional[Tensor] = None,
+            b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None
+            ) -> Tensor:
         r"""Compute B-effective of ``pulse`` with the spinarray's parameters
 
         Typical usage:
-            ``beff = spinarray.pulse2beff(pulse, *, loc, doEmbed=True, Δf, ``\
+            ``beff = spinarray.pulse2beff(pulse; loc, doEmbed=True, Δf, ``\
             ``b1Map)``
-            ``beff_ = spinarray.pulse2beff(pulse, *, loc_, doEmbed=False, ``\
+            ``beff_ = spinarray.pulse2beff(pulse; loc_, doEmbed=False, ``\
             ``Δf_, b1Map_)``
         Inputs:
             - ``pulse``: mrphy.mobjs.Pulse.
@@ -662,15 +662,12 @@ class SpinArray(object):
         """
         return self.shape
 
-    def to(
-        self, *,
-        device: torch.device = torch.device('cpu'),
-        dtype: torch.dtype = torch.float32
-    ) -> 'SpinArray':
+    def to(self, device: torch.device = torch.device('cpu'),
+           dtype: torch.dtype = torch.float32) -> SpinArray:
         r"""Duplicate the object to the prescribed device with dtype
 
         Usage:
-            ``new_spinarray = spinarray.to(*, device, dtype)``
+            ``new_spinarray = spinarray.to(;device, dtype)``
         Inputs:
             - ``device``: torch.device
             - ``dtype``: torch.dtype
@@ -683,14 +680,13 @@ class SpinArray(object):
                          γ_=self.γ_, M_=self.M_, device=device, dtype=dtype)
 
 
-class SpinCube(SpinArray):
+class SpinCube(object):
     r"""mrphy.mobjs.SpinCube object
 
     Usage:
-        ``SpinCube(shape, fov, mask, *, ofst, Δf_, T1_, T2_, γ_, M_, device,``\
-        `` dtype)``
-        ``SpinCube(shape, fov, mask, *, ofst, Δf, T1, T2, γ, M, device,``\
-        '' dtype)``
+        ``SpinCube(shape, fov; mask, ofst, Δf_, T1_, T2_, γ_, M_, device, ``\
+        ``dtype)``
+        ``SpinCube(shape, fov; mask, ofst, Δf, T1, T2, γ, M, device, dtype)``
     Inputs:
         - ``shape``: tuple, e.g., ``(N, nx, ny, nz)``.
         - ``fov``: `(N, xyz)`, "cm", field of view.
@@ -718,34 +714,25 @@ class SpinCube(SpinArray):
     __slots__ = set(_readonly+_compact+('fov', 'ofst'))
 
     def __init__(
-        self, shape: tuple, fov: Tensor, *, mask: Optional[Tensor] = None,
-        ofst: Tensor = tensor([[0., 0., 0.]]),
-        Δf: Optional[Tensor] = None, Δf_: Optional[Tensor] = None,
-        T1: Optional[Tensor] = None, T1_: Optional[Tensor] = None,
-        T2: Optional[Tensor] = None, T2_: Optional[Tensor] = None,
-        γ: Optional[Tensor] = None,  γ_: Optional[Tensor] = None,
-        M: Optional[Tensor] = None,  M_: Optional[Tensor] = None,
-        device: torch.device = torch.device('cpu'),
-        dtype: torch.dtype = torch.float32
-    ):
-        # 1) `SpinCube` is subclassed to `SpinArray`.
-        # 2) Attribute `spinarray` is included to enable extracting the
-        # `SpinArray` part of a `SpinCube()` instance.
-        # 3) `SpinCube.__getattr__` is tweaked for immitating super class
-        # access to `SpinCube().spinarray`'s attributes.
-        # To have these three features, we cannot have `super().__init__()` in
-        # `SpinCube`, which will disable the `__getattr__` tweak.
+            self, shape: tuple, fov: Tensor, mask: Optional[Tensor] = None,
+            ofst: Tensor = tensor([[0., 0., 0.]]),
+            Δf: Optional[Tensor] = None, Δf_: Optional[Tensor] = None,
+            T1: Optional[Tensor] = None, T1_: Optional[Tensor] = None,
+            T2: Optional[Tensor] = None, T2_: Optional[Tensor] = None,
+            γ: Optional[Tensor] = None,  γ_: Optional[Tensor] = None,
+            M: Optional[Tensor] = None,  M_: Optional[Tensor] = None,
+            device: torch.device = torch.device('cpu'),
+            dtype: torch.dtype = torch.float32):
         sp = SpinArray(shape, mask, T1=T1, T1_=T1_, T2=T2, T2_=T2_, γ=γ, γ_=γ_,
                        M=M, M_=M_, device=device, dtype=dtype)
-        object.__setattr__(self, 'spinarray', sp)
+        super().__setattr__('spinarray', sp)
 
         kw = {'device': sp.device, 'dtype': sp.dtype}
         # setattr(self, k, v), avoid computing `loc_` w/ `fov` & `ofst` not set
-        object.__setattr__(self, 'fov', fov.to(**kw))
-        object.__setattr__(self, 'ofst', ofst.to(**kw))
+        super().__setattr__('fov', fov.to(**kw))
+        super().__setattr__('ofst', ofst.to(**kw))
         # Initialize ``loc_`` in memory, reuse it.
-        object.__setattr__(self, 'loc_',
-                           torch.zeros((sp.shape[0], sp.nM, 3), **kw))
+        super().__setattr__('loc_', torch.zeros((sp.shape[0], sp.nM, 3), **kw))
         self._update_loc_()  # compute ``loc_`` from set ``fov`` & ``ofst`
 
         assert((Δf is None) or (Δf_ is None))
@@ -758,15 +745,8 @@ class SpinCube(SpinArray):
 
     def __getattr__(self, k):  # provoked only when `__getattribute__` failed
         if k+'_' not in self._compact:  # k not in ('Δf_', 'loc')
-            # Cannot do `self.spinarray` or `getattr(self, 'spinarray')` here.
-            # They cause infinite recursion when `SpinCube().__getattr__()` is
-            # queried with `spinarray`, which may happen during `deepcopy` or
-            # `pickle`.
-            # Therefore, call `object.__getattribute__()` here, and let it fail
-            # when it should.
-            spinarray = object.__getattribute__(self, 'spinarray')
             try:
-                return getattr(spinarray, k)
+                return getattr(self.spinarray, k)
             except AttributeError:
                 raise AttributeError(f"'SpinCube' has no attribute '{k}'")
 
@@ -775,15 +755,9 @@ class SpinCube(SpinArray):
                 v_.reshape(sp.shape+v_.shape[2:]))  # `mask` is all True
 
     def __setattr__(self, k_, v_):
-        if 'deepcopy' in (_.function for _ in inspect.stack()):
-            # Hack, this enables `deepcopy()` w/o overriding `__deepcopy__()`.
-            # Generator is faster than list comprehension.
-            object.__setattr__(self, k_, v_)
-            return
-
         if (k_ in self._readonly) or (k_+'_' in self._readonly):
             raise AttributeError(f"'SpinCube' object attribute '{k_}'"
-                                 " is read-only")
+                                  " is read-only")
 
         sp = self.spinarray
         if k_ in SpinArray.__slots__ or k_+'_' in SpinArray.__slots__:
@@ -803,7 +777,7 @@ class SpinCube(SpinArray):
         elif k_ in ('fov', 'ofst'):
             assert(v_.ndim == 2)
 
-        object.__setattr__(self, k_, v_)
+        super().__setattr__(k_, v_)
 
         # update `loc_` when needed
         if k_ in ('fov', 'ofst'):
@@ -837,16 +811,14 @@ class SpinCube(SpinArray):
         return
 
     def applypulse(
-        self, pulse: Pulse, *,
-        doEmbed: bool = False, doRelax: bool = True, doUpdate: bool = False,
-        b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None
-    ) -> Tensor:
+            self, pulse: Pulse, doEmbed: bool = False, doRelax: bool = True,
+            b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None
+            ) -> Tensor:
         r"""Apply a pulse to the spincube object
 
         Usage:
-            ``M = spincube.applypulse(pulse, *, doEmbed=True, doRelax, b1Map)``
-            ``M_ = spincube.applypulse(pulse, *, doEmbed=False, doRelax,``\
-            `` b1Map_)``
+            ``M = spincube.applypulse(pulse; doEmbed=True, doRelax, b1Map)``
+            ``M_ = spincube.applypulse(pulse; doEmbed=False, doRelax, b1Map_)``
 
         Inputs:
             - ``pulse``: mobjs.Pulse object.
@@ -862,42 +834,40 @@ class SpinCube(SpinArray):
         b1Map_ = (b1Map_ if b1Map is None else self.extract(b1Map))
 
         return self.spinarray.applypulse(pulse, doEmbed=doEmbed,
-                                         doRelax=doRelax, doUpdate=doUpdate,
-                                         Δf_=self.Δf_, loc_=self.loc_,
-                                         b1Map_=b1Map_)
+                                         doRelax=doRelax, Δf_=self.Δf_,
+                                         loc_=self.loc_, b1Map_=b1Map_)
+    def applypulse_ss(
+            self, pulse: Pulse, doEmbed: bool = False, doRelax: bool = True,
+            b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None
+            ) -> Tensor:
+        r"""Apply a pulse to the spincube object
 
-    def freeprec(
-        self, dur: Tensor, *,
-        doEmbed: bool = False, doRelax: bool = True, doUpdate: bool = False
-    ) -> Tensor:
-        r"""Free precession of duration ``dur``
+        Usage:
+            ``M = spincube.applypulse(pulse; doEmbed=True, doRelax, b1Map)``
+            ``M_ = spincube.applypulse(pulse; doEmbed=False, doRelax, b1Map_)``
 
-        Typical usage:
-            ``M = obj.freeprec(dur, doEmbed=True, doRelax, doUpdate)``
-            ``M_ = obj.applypulse(dur, doEmbed=False, doRelax, doUpdate)``
         Inputs:
-            - ``dur``: `()` ⊻ `(N ⊻ 1,)`, "Sec", duration of free-precession.
+            - ``pulse``: mobjs.Pulse object.
         Optionals:
-            - ``doEmbed``: [t/F], return ``M`` or ``M_``
-            - ``doRelax``: [T/f], do relaxation during free precession.
-            - ``doUpdate``: [t/F], update ``self.M_``
+            - ``doEmbed``: [t/F], return ``M`` or ``M_``.
+            - ``doRelax``: [T/f], do relaxation during Bloch simulation.
+            - ``b1Map`` ⊻ ``b1Map_``: `(N,*Nd ⊻ nM,xy,(nCoils))`, transmit \
+              sensitivity.
         Outputs:
-            - ``M`` ⊻ ``M_``: `(N,*Nd ⊻ nM,xyz)`
-
-        .. note::
-            When ``doUpdate == True and doEmbed == False``, the output compact
-            magnetization Tensor is a reference to ``self.M_``, and needs
-            caution when being accessed.
+            - ``M`` ⊻ ``M_``: `(N,*Nd ⊻ nM,xyz)`.
         """
+        assert ((b1Map_ is None) or (b1Map is None))
+        b1Map_ = (b1Map_ if b1Map is None else self.extract(b1Map))
 
-        return self.spinarray.freeprec(dur, Δf_=self.Δf_, doEmbed=doEmbed,
-                                       doRelax=doRelax, doUpdate=doUpdate)
+        return self.spinarray.applypulse_ss(pulse, doEmbed=doEmbed,
+                                         doRelax=doRelax, Δf_=self.Δf_,
+                                         loc_=self.loc_, b1Map_=b1Map_)
 
-    def asdict(self, *, toNumpy: bool = True, doEmbed: bool = True) -> dict:
+    def asdict(self, toNumpy: bool = True, doEmbed: bool = True) -> dict:
         r"""Convert mrphy.mobjs.SpinCube object to dict
 
         Usage:
-            ``d = spincube.asdict(*, toNumpy, doEmbed)``
+            ``d = spincube.asdict(;toNumpy, doEmbed)``
 
         Inputs:
             - ``toNumpy``: [T/f], convert ``Tensor`` to Numpy arrays.
@@ -918,16 +888,93 @@ class SpinCube(SpinArray):
         d.update(self.spinarray.asdict(toNumpy=toNumpy, doEmbed=doEmbed))
         return d
 
+    def crds_(self, crds: list) -> list:
+        r"""Compute crds for compact attributes
+
+        Data in a SpinCube object is stored compactly, such that only those
+        correspond to ``1`` on the ``spincube.mask`` is kept.
+        This function is provided to facilitate indexing the compact data from
+        regular indices, by computing (ix, iy, iz) -> iM
+
+        Usage:
+            ``crds_ = spincube.crds_(crds)``
+        Inputs:
+            - ``crds``: indices for indexing non-compact attributes.
+        Outputs:
+            - ``crds_``: list, ``len(crds_) == 2+len(crds)-self.ndim``.
+
+        ``v_[crds_] == v[crds]``, when ``v_[crds_]=new_value`` is effective.
+        """
+        return self.spinarray.crds_(crds)
+
+    def dim(self) -> int:
+        r"""Nd of the spincube object, syntax sugar for len(spincube.shape)
+
+        Usage:
+            ``Nd = spincube.dim()``
+        """
+        return self.spinarray.dim()
+
+    def embed(self, v_: Tensor, out: Optional[Tensor] = None) -> Tensor:
+        r"""Embed compact data into the ``spincube.mask``.
+
+        Usage:
+            ``out = spincube.embed(v_; out)``
+        Inputs:
+            - ``v_``: `(N, nM, ...)`, must be contiguous.
+        Optionals:
+            - ``out``: `(N, *Nd, ...)`, in-place holder.
+        Outputs:
+            - ``out``: `(N, *Nd, ...)`.
+        """
+        return self.spinarray.embed(v_, out=out)
+
+    def extract(self, v: Tensor, out_: Optional[Tensor] = None) -> Tensor:
+        r"""Extract data with the ``spincube.mask``, making it compact
+
+        Usage:
+            ``out_ = spincube.extract(v; out_)``
+        Inputs:
+            - ``v``: `(N, *Nd, ...)`.
+        Optionals:
+            - ``out_``: `(N, nM, ...)`, in-place holder, must be contiguous.
+        Outputs:
+            - ``out_``: `(N, nM, ...)`.
+        """
+        return self.spinarray.extract(v, out_=out_)
+
+    def mask_(self, mask: Tensor) -> Tensor:
+        r"""Extract the compact region of an input external ``mask``.
+
+        Usage:
+            ``mask_ = spincube.mask_(mask)``
+        Inputs:
+            - ``mask``: `(1, *Nd)`.
+        Outputs:
+            - ``mask_``: `(1, nM)`, can be used on compact attributes.
+        """
+        return self.spinarray.mask_(mask)
+
+    def numel(self) -> int:
+        r"""Number of spins for the spincube object, incompact.
+
+        Syntax sugar of ``spincube.mask.numel()``, effectively
+        ``prod(spincube.size())``.
+
+        Usage:
+            ``res = spincube.numel()``
+        """
+        return self.spinarray.numel()
+
     def pulse2beff(
-        self, pulse: Pulse, *,
-        doEmbed: bool = False,
-        b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None
-    ) -> Tensor:
+            self, pulse: Pulse, doEmbed: bool = False,
+            b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None
+            ) -> Tensor:
         r"""Compute B-effective of ``pulse`` with the spincube's parameters
 
         Typical usage:
-            ``beff = spincube.pulse2beff(pulse, *, doEmbed=True, b1Map)``
-            ``beff_ = spincube.pulse2beff(pulse, *, doEmbed=False, b1Map_)``
+            ``beff = spincube.pulse2beff(pulse; doEmbed=True, b1Map)``
+            ``beff_ = spincube.pulse2beff(pulse; doEmbed=False, b1Map_)``
         Inputs:
             - ``pulse``: mrphy.mobjs.Pulse.
         Optionals:
@@ -941,32 +988,40 @@ class SpinCube(SpinArray):
                                          Δf_=self.Δf_,
                                          b1Map=b1Map, b1Map_=b1Map_)
 
-    def to(
-        self, *,
-        device: torch.device = torch.device('cpu'),
-        dtype: torch.dtype = torch.float32
-    ) -> 'SpinCube':
+    def size(self) -> tuple:
+        r"""Size of the spincube object.
+
+        Syntax sugar of ``spincube.shape``.
+
+        Usage:
+            ``sz = spincube.size()``
+        """
+        return self.spinarray.size()
+
+    def to(self, device: torch.device = torch.device('cpu'),
+           dtype: torch.dtype = torch.float32) -> SpinCube:
         r"""Duplicate the object to the prescribed device with dtype
 
         Usage:
-            ``new_spincube = spincube.to(*, device, dtype)``
+            ``new_spincube = spincube.to(;device, dtype)``
         Inputs:
             - ``device``: torch.device.
             - ``dtype``: torch.dtype.
         Outputs:
             - ``new_spincube``: mrphy.mobjs.SpinCube object.
         """
-        if self.device == device and self.dtype == dtype:
+        if (self.device != device) or (self.dtype != dtype):
+            return SpinCube(self.shape, self.fov, ofst=self.ofst, Δf_=self.Δf_,
+                            T1_=self.T1_, T2_=self.T2_, γ_=self.γ_, M_=self.M_,
+                            device=device, dtype=dtype)
+        else:
             return self
-        return SpinCube(self.shape, self.fov, ofst=self.ofst, Δf_=self.Δf_,
-                        T1_=self.T1_, T2_=self.T2_, γ_=self.γ_, M_=self.M_,
-                        device=device, dtype=dtype)
+        return
 
 
 class SpinBolus(SpinArray):
     def __init__(
-        self
-    ):
+            self):
         pass
     pass
 

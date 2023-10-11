@@ -3,19 +3,21 @@ r"""Simulation codes with implicit Jacobian operations.
 
 import torch
 from torch import tensor, Tensor
-from typing import Optional, Tuple
+from typing import Optional
 
 from mrphy import γH, dt0, π
 from mrphy import utils, beffective
 
+# TODO:
+# - Allow Vo to be allocated outside `beff2uϕ`, `uϕrot` and `rfgr2beff`
 
-__all__ = ['blochsim_1step', 'blochsim', 'blochsim_ab', 'freeprec']
+
+__all__ = ['blochsim_1step', 'blochsim', 'blochsim_ab']
 
 
 def blochsim_1step(
-    M: Tensor, M1: Tensor, b: Tensor,
-    E1: Tensor, E1_1: Tensor, E2: Tensor, γ2πdt: Tensor
-) -> Tuple[Tensor, Tensor]:
+        M: Tensor, M1: Tensor, b: Tensor,
+        E1: Tensor, E1_1: Tensor, E2: Tensor, γ2πdt: Tensor):
     r"""Single step bloch simulation
 
     Usage:
@@ -50,15 +52,14 @@ def blochsim_1step(
 
 
 def blochsim(
-    M: Tensor, Beff: Tensor, *,
-    T1: Optional[Tensor] = None, T2: Optional[Tensor] = None,
-    γ: Tensor = γH, dt: Tensor = dt0
-) -> Tensor:
+        M: Tensor, Beff: Tensor,
+        T1: Optional[Tensor] = None, T2: Optional[Tensor] = None,
+        γ: Tensor = γH, dt: Tensor = dt0):
     r"""Bloch simulator with implicit Jacobian operations.
 
     Usage:
-        ``Mo = blochsim(Mi, Beff, *, T1, T2, γ, dt)``
-        ``Mo = blochsim(Mi, Beff, *, T1=None, T2=None, γ, dt)``
+        ``Mo = blochsim(Mi, Beff; T1, T2, γ, dt)``
+        ``Mo = blochsim(Mi, Beff; T1=None, T2=None, γ, dt)``
     Inputs:
         - ``M``: `(N, *Nd, xyz)`, Magnetic spins, assumed equilibrium \
           [[[0 0 1]]].
@@ -106,7 +107,7 @@ def blochsim(
     return M
 
 
-def blochsim_ab(M: Tensor, A: Tensor, B: Tensor) -> Tensor:
+def blochsim_ab(M: Tensor, A: Tensor, B: Tensor):
     r"""Bloch simulation via Hargreave's mat/vec representation
 
     Usage:
@@ -120,47 +121,4 @@ def blochsim_ab(M: Tensor, A: Tensor, B: Tensor) -> Tensor:
         - ``M``: `(N, *Nd, xyz)`, Result magnetic spins
     """
     M = (A @ M[..., None]).squeeze_(dim=-1) + B
-    return M
-
-
-def freeprec(
-    M: Tensor, dur: Tensor, *,
-    T1: Optional[Tensor] = None, T2: Optional[Tensor] = None,
-    Δf: Optional[Tensor] = None
-) -> Tensor:
-    r"""Isochromats free precession with given relaxation and off-resonance
-
-    Usage:
-        ``M = freeprec(M, dur, *, T1, T2, Δf)``
-    Inputs:
-        - ``M``: `(N, *Nd, xyz)`, Magnetic spins, assumed equilibrium \
-          magnitude [0 0 1]
-        - ``dur``: `()` ⊻ `(N ⊻ 1,)`, "Sec", duration of free-precession.
-    OPTIONALS:
-        - ``T1``: `()` ⊻ `(N ⊻ 1, *Nd ⊻ 1,)`, "Sec", T1 relaxation.
-        - ``T2``: `()` ⊻ `(N ⊻ 1, *Nd ⊻ 1,)`, "Sec", T2 relaxation.
-        - ``Δf``: `(N ⊻ 1, *Nd ⊻ 1,)`, "Hz", off-resonance.
-    Outputs:
-        - ``M``: `(N, *Nd, xyz)`, Result magnetic spins
-    """
-    ndim = M.ndim  # dur, T1, T2, Δf are reshaped to be compatible w/ M
-    dur = dur.reshape(dur.shape+(ndim-dur.ndim)*(1,))
-
-    Mx, My, Mz = M.split(1, dim=-1)  # (N, *Nd, 1)
-
-    # Precession
-    if Δf is not None:
-        Δf = Δf.reshape(Δf.shape+(ndim-Δf.ndim)*(1,))
-        ϕ = -(2*π)*Δf*dur  # positive Δf dephases spin clock-wise/negatively
-        cϕ, sϕ = torch.cos(ϕ), torch.sin(ϕ)
-        Mx, My = cϕ*Mx-sϕ*My, sϕ*Mx+cϕ*My
-
-    # Relaxation
-    assert((T1 is None) == (T2 is None))  # both or neither
-    if T1 is not None:
-        T1, T2 = (x.reshape(x.shape+(ndim-x.ndim)*(1,)) for x in (T1, T2))
-        E1, E2 = torch.exp(-dur/T1), torch.exp(-dur/T2)
-        Mx, My, Mz = E2*Mx, E2*My, E1*Mz+1-E1
-
-    M = torch.cat((Mx, My, Mz), dim=-1)  # (N, *Nd, xyz)
     return M

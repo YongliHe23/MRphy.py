@@ -1,9 +1,10 @@
-r"""B-effective related functions"""
+r""" B-effective related functions
+"""
 
 import torch
 import torch.nn.functional as F
 from torch import tensor, Tensor
-from typing import Optional, Tuple
+from typing import Optional
 
 from mrphy import γH, dt0, π
 from mrphy import utils
@@ -15,11 +16,11 @@ from mrphy import utils
 __all__ = ['beff2ab', 'beff2uφ', 'rfgr2beff']
 
 
-def beff2uϕ(beff: Tensor, γ2πdt: Tensor, *, dim=-1) -> Tuple[Tensor, Tensor]:
+def beff2uϕ(beff: Tensor, γ2πdt: Tensor, dim=-1):
     r"""Compute rotation axes and angles from B-effectives
 
     Usage:
-        ``U, Φ = beff2uϕ(beff, γ2πdt, *, dim)``
+        ``U, Φ = beff2uϕ(beff, γ2πdt)``
     Inputs:
         - ``beff``: `(N, *Nd, xyz)`, "Gauss", B-effective, magnetic field \
           applied on `M`.
@@ -38,16 +39,15 @@ def beff2uϕ(beff: Tensor, γ2πdt: Tensor, *, dim=-1) -> Tuple[Tensor, Tensor]:
 
 
 def beff2ab(
-    beff: Tensor, *,
-    E1: Tensor = tensor(0.), E2: Tensor = tensor(0.), γ: Tensor = γH,
-    dt: Tensor = dt0
-) -> Tuple[Tensor, Tensor]:
+        beff: Tensor,
+        E1: Tensor = tensor(0.), E2: Tensor = tensor(0.),
+        γ: Tensor = γH, dt: Tensor = dt0):
     r"""Compute Hargreave's 𝐴/𝐵, mat/vec, from B-effectives
 
     See: `doi:10.1002/mrm.1170 <https://doi.org/10.1002/mrm.1170>`_.
 
     Usage:
-        ``A, B = beff2ab(beff, *, E1, E2, γ, dt)``
+        ``A, B = beff2ab(beff; E1, E2, γ, dt)``
 
     Inputs:
         - ``beff``: `(N,*Nd,xyz,nT)`, B-effective.
@@ -103,19 +103,19 @@ def beff2ab(
 
 
 def rfgr2beff(
-    rf: Tensor, gr: Tensor, loc: Tensor, *,
-    Δf: Optional[Tensor] = None, b1Map: Optional[Tensor] = None, γ: Tensor = γH
-) -> Tensor:
+        rf: Tensor, gr: Tensor, loc: Tensor,
+        Δf: Optional[Tensor] = None, b1Map: Optional[Tensor] = None,
+        γ: Tensor = γH):
     r"""Compute B-effectives from rf and gradients
 
     Usage:
-        ``beff = rfgr2beff(rf, gr, loc, *, Δf, b1Map, γ)``
+        ``beff = rfgr2beff(rf, gr, loc, Δf, b1Map, γ)``
     Inputs:
         - ``rf``: `(N,xy,nT,(nCoils))`, "Gauss", `xy` for separating real and \
           imag part.
         - ``gr``: `(N,xyz,nT)`, "Gauss/cm".
-        - ``loc``: `(N,*Nd,xyz)`, "cm", locations.
     Optionals:
+        - ``loc``: `(N,*Nd,xyz)`, "cm", locations.
         - ``Δf``: `(N,*Nd,)`, "Hz", off-resonance.
         - ``b1Map``: `(N, *Nd, xy (, nCoils)`, a.u., transmit sensitivity.
         - ``γ``:  `()` ⊻ `(N ⊻ 1, *Nd ⊻ 1,)`, "Hz/Gauss", gyro ratio.

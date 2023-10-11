@@ -3,7 +3,7 @@ r"""MRphy utilities
 Utilities for data indexing, conversions, spin rotation.
 """
 
-from typing import Any, Tuple, Union
+from typing import Tuple, Union
 from numbers import Number
 
 import torch
@@ -11,8 +11,8 @@ import numpy as np
 from numpy import ndarray as ndarray_c
 from torch import Tensor
 
-from mrphy import γH, dt0, π, __CUPY_IS_AVAILABLE__
-if __CUPY_IS_AVAILABLE__:
+from mrphy import γH, dt0, π
+if torch.cuda.is_available():
     import cupy as cp
     from cupy import ndarray as ndarray_g
     ndarrayA = Union[ndarray_c, ndarray_g]
@@ -24,7 +24,7 @@ __all__ = ['ctrsub', 'g2k', 'g2s', 'k2g', 'rf_c2r', 'rf_r2c', 'rf2tρθ',
            'rfclamp', 's2g', 's2ts', 'sclamp', 'ts2s', 'tρθ2rf', 'uφrot']
 
 
-def ctrsub(shape: Any) -> Any:
+def ctrsub(shape):
     r"""Compute center subscript indices of a regular grid
 
     Usage:
@@ -33,11 +33,11 @@ def ctrsub(shape: Any) -> Any:
     return shape//2
 
 
-def g2k(g: Tensor, isTx: bool, dt: Tensor = dt0, *, γ: Tensor = γH) -> Tensor:
+def g2k(g: Tensor, isTx: bool, γ: Tensor = γH, dt: Tensor = dt0) -> Tensor:
     r"""Compute k-space from gradients.
 
     Usage:
-        ``k = g2k(g, isTx, dt, *, γ)``
+        ``k = g2k(g, isTx; γ, dt)``
 
     Inputs:
         - ``g``: `(N, xyz, nT)`, "Gauss/cm", gradient
@@ -66,7 +66,7 @@ def g2s(g: Tensor, dt: Tensor = dt0) -> Tensor:
     r"""Compute slew rates from gradients.
 
     Usage:
-        ``s = g2s(g, dt)``
+        ``s = g2s(g; dt)``
     Inputs:
         - ``g``: `(N, xyz, nT)`, "Gauss/cm", gradient
     Optionals:
@@ -83,11 +83,11 @@ def g2s(g: Tensor, dt: Tensor = dt0) -> Tensor:
     return s
 
 
-def k2g(k: Tensor, isTx: bool, dt: Tensor = dt0, *, γ: Tensor = γH) -> Tensor:
+def k2g(k: Tensor, isTx: bool, γ: Tensor = γH, dt: Tensor = dt0) -> Tensor:
     r"""Compute k-space from gradients
 
     Usage:
-        ``k = k2g(k, isTx, dt, *, γ)``
+        ``k = k2g(k, isTx; γ, dt)``
 
     Inputs:
         - ``k``: `(N, xyz, nT)`, "cycle/cm", Tx or Rx k-space.
@@ -111,26 +111,6 @@ def k2g(k: Tensor, isTx: bool, dt: Tensor = dt0, *, γ: Tensor = γH) -> Tensor:
     return g
 
 
-def lρθ2rf(lρ: Tensor, θ: Tensor, rfmax: Tensor) -> Tensor:
-    r"""Convert tρ ≔ tan(ρ/ρ_max⋅π/2), and θ to real RF
-
-    Usage:
-        ``rf = lρθ2rf(lρ, θ, rfmax)``
-    Inputs:
-        - ``lρ``: `(N, 1, nT, (nCoils))`, logit(ρ/rfmax), [-∞, +∞).
-        - ``θ``: `(N, 1, nT, (nCoils))`, RF phase, [-π, π).
-        - ``rfmax``: `(N, (nCoils))`, RF pulse, Gauss, x for real, y for imag.
-    Outputs:
-        - ``rf``: `(N, xy, nT, (nCoils))`, RF pulse, Gauss, x: real, y: imag.
-
-    See Also:
-        :func:`~mrphy.utils.rf2lρθ`
-    """
-    rfmax = rfmax[None] if rfmax.ndim == 0 else rfmax
-    rfmax = rfmax[:, None, None, ...]  # -> (N, 1, 1, (nCoils))
-    return lρ.sigmoid()*rfmax*torch.cat((θ.cos(), θ.sin()), dim=1)
-
-
 def rf_c2r(rf: ndarrayA) -> ndarrayA:
     r"""Convert complex RF to real RF
 
@@ -146,10 +126,8 @@ def rf_c2r(rf: ndarrayA) -> ndarrayA:
     """
     if isinstance(rf, ndarray_c):
         return np.concatenate((np.real(rf), np.imag(rf)), axis=1)
-    elif __CUPY_IS_AVAILABLE__:  # ndarray_g, i.e., cupy.ndarray
+    else:  # ndarray_g, i.e., cupy.ndarray
         return cp.concatenate((cp.real(rf), cp.imag(rf)), axis=1)
-    else:
-        raise TypeError(f'Unknown type: {type(rf)}')
 
 
 def rf_r2c(rf: ndarrayA) -> ndarrayA:
@@ -168,38 +146,18 @@ def rf_r2c(rf: ndarrayA) -> ndarrayA:
     return rf[:, [0], ...] + 1j*rf[:, [1], ...]
 
 
-def rf2lρθ(rf: Tensor, rfmax: Tensor) -> Tuple[Tensor, Tensor]:
-    """Convert real RF to tρ ≔ tan(ρ/ρ_max⋅π/2), and θ
-
-    Usage:
-        ``lρ, θ = rf2lρθ(rf, rfmax)``
-    Inputs:
-        - ``rf``: `(N, xy, nT, (nCoils))`, RF pulse, Gauss, x: real, y: imag.
-        - ``rfmax``: `(N, (nCoils))`, RF pulse, Gauss.
-    Outputs:
-        - ``lρ``: `(N, 1, nT, (nCoils))`, logit(ρ/rfmax), [0, +∞).
-        - ``θ``: `(N, 1, nT, (nCoils))`, RF phase, [-π, π].
-
-    See Also:
-        :func:`~mrphy.utils.lρθ2rf`
-    """
-    rfmax = rfmax[None] if rfmax.ndim == 0 else rfmax  # scalar to 1d-tensor
-    lρ = (rf.norm(dim=1, keepdim=True)/rfmax[:, None, None, ...]).logit()
-    θ = torch.atan2(rf[:, [1], :], rf[:, [0], :])
-    return lρ, θ
-
-
 def rf2tρθ(rf: Tensor, rfmax: Tensor) -> Tuple[Tensor, Tensor]:
     """Convert real RF to tρ ≔ tan(ρ/ρ_max⋅π/2), and θ
 
     Usage:
         ``tρ, θ = rf2tρθ(rf, rfmax)``
     Inputs:
-        - ``rf``: `(N, xy, nT, (nCoils))`, RF pulse, Gauss, x: real, y: imag.
+        - ``rf``: `(N, xy, nT, (nCoils))`, RF pulse, Gauss, x for real, y for \
+          imag.
         - ``rfmax``: `(N, (nCoils))`, RF pulse, Gauss, x for real, y for imag.
     Outputs:
         - ``tρ``: `(N, 1, nT, (nCoils))`, tan(ρ/rfmax*π/2), [0, +∞).
-        - ``θ``: `(N, 1, nT, (nCoils))`, RF phase, [-π, π).
+        - ``θ``: `(N, 1, nT, (nCoils))`, RF phase, [-π/2, π/2].
 
     See Also:
         :func:`~mrphy.utils.tρθ2rf`
@@ -210,11 +168,11 @@ def rf2tρθ(rf: Tensor, rfmax: Tensor) -> Tuple[Tensor, Tensor]:
     return tρ, θ
 
 
-def rfclamp(rf: Tensor, rfmax: Tensor, *, eps: Number = 1e-7) -> Tensor:
+def rfclamp(rf: Tensor, rfmax: Tensor, eps: Number = 1e-7) -> Tensor:
     r"""Clamp RF to rfmax
 
     Usage:
-        ``rf = rfclamp(rf, rfmax, *, eps)``
+        ``rf = rfclamp(rf, rfmax)``
     Inputs:
         - ``rf``: `(N, xy, nT, (nCoils))`, RF pulse, Gauss, x for real, y for \
           imag.
@@ -236,7 +194,7 @@ def s2g(s: Tensor, dt: Tensor = dt0) -> Tensor:
     r"""Compute gradients from slew rates.
 
     Usage:
-        ``g = s2g(s, dt)``
+        ``g = s2g(s; dt)``
 
     Inputs:
         - ``s``: `(N, xyz, nT)`, "Gauss/cm/Sec", Slew rate.
@@ -316,7 +274,8 @@ def tρθ2rf(tρ: Tensor, θ: Tensor, rfmax: Tensor) -> Tensor:
         - ``θ``: `(N, 1, nT, (nCoils))`, RF phase, [-π/2, π/2].
         - ``rfmax``: `(N, (nCoils))`, RF pulse, Gauss, x for real, y for imag.
     Outputs:
-        - ``rf``: `(N, xy, nT, (nCoils))`, RF pulse, Gauss, x: real, y: imag.
+        - ``rf``: `(N, xy, nT, (nCoils))`, RF pulse, Gauss, x for real, y for \
+          imag.
 
     See Also:
         :func:`~mrphy.utils.rf2tρθ`
@@ -326,7 +285,7 @@ def tρθ2rf(tρ: Tensor, θ: Tensor, rfmax: Tensor) -> Tensor:
     return tρ.atan()/π*2*rfmax*torch.cat((θ.cos(), θ.sin()), dim=1)
 
 
-def uϕrot(U: Tensor, Φ: Tensor, Vi: Tensor) -> Tensor:
+def uϕrot(U: Tensor, Φ: Tensor, Vi: Tensor):
     r"""Rotate Vi about axis U by Φ
 
     Usage:
