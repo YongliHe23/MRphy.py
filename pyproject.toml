@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mrphy"
+version = "0.2.0.post1"
+description = "MRI excitation physics module (steady-state version)"
+requires-python = ">=3.9"
+dependencies = ["torch", "numpy"]
+
+[tool.setuptools.packages.find]
+where = ["."]
