@@ -1032,6 +1032,8 @@ class SpinCube(SpinArray):
     def applypulse_ss(
         self, pulse: Pulse, *,
         doEmbed: bool = False, doRelax: bool = True, doUpdate: bool = False, betaoff: bool = False,
+        loc: Optional[Tensor] = None, loc_: Optional[Tensor] = None,
+        Δf: Optional[Tensor] = None, Δf_: Optional[Tensor] = None,
         b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None,
         alpha: float=15, TR: float=55e-3
         ) -> Tensor:
@@ -1040,23 +1042,6 @@ class SpinCube(SpinArray):
                                         b1Map_=b1Map_,
                                         alpha=alpha,TR=TR)
         return Mss_
-
-    def applypulse_ss_sms(
-        self, pulse: Pulse, *,
-        doEmbed: bool = False, doRelax: bool = True, doUpdate: bool = False,
-        b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None,
-        TR: float=55e-3, vTR: float=55e-2,
-        alpha: float=52, alphaDur: float=8e-3
-        ) -> Tensor:
-        assert ((b1Map_ is None) or (b1Map is None))
-        b1Map_ = (b1Map_ if b1Map is None else self.extract(b1Map))
-
-        return self.spinarray.applypulse_ss_sms(pulse, doEmbed=doEmbed,
-                                                doRelax=doRelax, doUpdate=doUpdate,
-                                                Δf_=self.Δf_, loc_=self.loc_,
-                                                b1Map_=b1Map_,
-                                                TR=TR, vTR=vTR,
-                                                alpha=alpha, alphaDur=alphaDur)
 
     def target_Mss(
         self, beta_iv: float, beta_ov: float, iv:Tensor, ov:Tensor, *,
