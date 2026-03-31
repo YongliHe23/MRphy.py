@@ -496,7 +496,7 @@ class SpinArray(object):
         Mss_=torch.zeros_like(MT_) #(N,nM,xyz)
         Mss_[...,2]=(self.M_[...,2]*(1-E1_))/(1-torch.cos(Beta_)*E1_*math.cos(math.radians(alpha)))*torch.cos(Beta_) #steady state Mz before alpha
         
-        Mss_[...,1]=(self.M_[...,2]*(1-E1_))/(1-torch.cos(Beta_)*E1_*math.cos(math.radians(alpha)))*torch.sin(Beta_)
+        Mss_[...,0]=(self.M_[...,2]*(1-E1_))/(1-torch.cos(Beta_)*E1_*math.cos(math.radians(alpha)))*torch.sin(Beta_)
         
         
         Mss_=(Mss_ if doEmbed==False else self.embed(Mss_))
@@ -598,7 +598,8 @@ class SpinArray(object):
         
 
         d[...,2]= (M0*(1-E1))/(1-torch.cos(torch.deg2rad(beta))*math.cos(math.radians(alpha))*E1)*torch.cos(torch.deg2rad(beta))
-        
+        d[...,0]= (M0*(1-E1))/(1-torch.cos(torch.deg2rad(beta))*math.cos(math.radians(alpha))*E1)*torch.sin(torch.deg2rad(beta))
+
         d=d.nan_to_num()
 
         weight=weight_iv*ov+weight_ov*iv
