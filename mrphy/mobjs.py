@@ -458,9 +458,14 @@ class SpinArray(object):
         b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None,
         alpha: float=15, TR: float=55e-3
         ) -> Tensor:
-        r"""Calculate the steady state(SS) Mz right before signal excitation (alpha) in SPGR
-        The specific sequence for (SS-)SPGR is:
-        [beta(iv_saturate)-alpha(uniform_tip_down)-readout]xN_rep
+        r"""Calculate the steady state(SS) magnetization in Spoiled Gradient-Recalled Echo (SPGR)
+        Here the input "Pulse" object is generally treadted as a saturation preparation pulse (called 'beta'),
+        followed by a nonselective excitation(called 'alpha').
+        I.e., assuming the following sequence structure:
+        [beta-alpha-readout]xN_rep
+        If alpha=0, then input Pulse object would be treated as selective exctiation
+        instead of saturation preparation.
+        The output 'Mss' is defined at the moment right before the 'alpha' pulse.
         Inputs:
             - ``pulse``: mrphy.mobjs.Pulse.
         Optionals:
@@ -471,8 +476,8 @@ class SpinArray(object):
             - ``Δf``⊻ ``Δf_``: `(N,*Nd ⊻ nM)`, "Hz", off-resonance.
             - ``b1Map`` ⊻ ``b1Map_``: `(N,*Nd ⊻ nM,xy,(nCoils))`, transmit \
               sensitivity.
-            - ``TR``:float, Repetition time for the Steady-State sequence.
-            - ``alpha``: float, Flip angle in degree for the uniform tip down pulse.      
+            - ``TR``:float, Repetition time for the Steady-State sequence. (sec)
+            - ``alpha``: float, Flip angle for the uniform tip down pulse. (degree) 
         Outputs:
             - ``M`` ⊻ ``M_``: `(N,*Nd ⊻ nM,xyz)`
         """
