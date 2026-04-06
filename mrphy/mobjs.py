@@ -562,56 +562,6 @@ class SpinArray(object):
         Mss_=(Mss_ if doEmbed==False else self.embed(Mss_))
         return Mss_
 
-    def target_Mss(
-        self, beta_iv: float, beta_ov: float, iv:Tensor, ov:Tensor, *,
-        weight_iv:float=1.0, weight_ov:float=1.0,
-        doEmbed: bool = True,
-        alpha: float=15, TR: float=55e-3
-    )-> dict:
-        r""" Compute the target steady-state Magnetization profile before alpha excitation
-
-        Usage:
-            `` Mss_d=spinarray.target_Mss(0,90,iv_mask,ov_mask,*, alpha=20,TR=80e-3)
-        
-        Inputs:
-            -``beta_iv``: target iv beta flip angle, in [deg]
-            -``beta_ov``: target ov beta flip angle, in [deg]
-            -``iv``: iv mask, [nbatch,*nM]
-            -``ov``: ov mask, [nbatch,*nM]
-        
-        Optionals:
-
-        Outputs:
-            -``target``: dictionary containing target SS magnetization and weights
-                - ``d``: [nbatch,*nM]
-                - ``weight``: [nbatch,*nM]
-
-        """
-
-        d=torch.zeros(iv.shape+(3,),device=self.device)
-        M0=self.M[...,2] #(N,*nM)
-        
-        beta=torch.zeros_like(d[...,2]) #(N,*nM)
-        beta=beta_iv*iv+beta_ov*ov
-        
-        E1=torch.exp(-TR/self.T1) #(N,*nM)
-        
-
-        d[...,2]= (M0*(1-E1))/(1-torch.cos(torch.deg2rad(beta))*math.cos(math.radians(alpha))*E1)*torch.cos(torch.deg2rad(beta))
-        d[...,0]= (M0*(1-E1))/(1-torch.cos(torch.deg2rad(beta))*math.cos(math.radians(alpha))*E1)*torch.sin(torch.deg2rad(beta))
-
-        d=d.nan_to_num()
-
-        weight=weight_iv*ov+weight_ov*iv
-        weight=weight[None,...]
-
-        target={
-            "d":(d if doEmbed else self.extract(d)),
-            "weight":(weight if doEmbed else self.extract(weight))
-            }
-
-        return target
-
     def asdict(self, *, toNumpy: bool = True, doEmbed: bool = True) -> dict:
         r"""Convert mrphy.mobjs.SpinArray object to dict
 
@@ -1059,39 +1009,6 @@ class SpinCube(SpinArray):
                                                 TR=TR, vTR=vTR,
                                                 alpha=alpha, alphaDur=alphaDur)
 
-    def target_Mss(
-        self, beta_iv: float, beta_ov: float, iv:Tensor, ov:Tensor, *,
-        weight_iv:float=1.0, weight_ov:float=1.0,
-        doEmbed: bool = True,
-        alpha: float=15, TR: float=55e-3
-    )-> dict:
-        r""" Compute the target steady-state Magnetization profile
-
-        Usage:
-            `` Mss_d=spinarray.target_Mss(0,90,iv_mask,ov_mask,*, alpha=20,TR=80e-3)
-        
-        Inputs:
-            -``beta_iv``: target iv beta flip angle, in [deg]
-            -``beta_ov``: target ov beta flip angle, in [deg]
-            -``iv``: iv mask, [nbatch,*nM]
-            -``ov``: ov mask, [nbatch,*nM]
-        
-        Optionals:
-
-        Outputs:
-            -``target``: dictionary containing target SS magnetization and weights
-                - ``d``: [nbatch,*nM]
-                - ``weight``: [nbatch,*nM]
-
-        """
-        target=self.spinarray.target_Mss(beta_iv,beta_ov,iv,ov,
-                                        weight_iv=weight_iv,
-                                        weight_ov=weight_ov,
-                                        doEmbed=doEmbed,
-                                        alpha=alpha,
-                                        TR=TR)
-
-        return target
 
     def freeprec(
         self, dur: Tensor, *,

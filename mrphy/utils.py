@@ -5,6 +5,7 @@ Utilities for data indexing, conversions, spin rotation.
 
 from typing import Any, Tuple, Union
 from numbers import Number
+import math
 
 import torch
 import numpy as np
@@ -21,7 +22,8 @@ else:
 
 
 __all__ = ['ctrsub', 'g2k', 'g2s', 'k2g', 'rf_c2r', 'rf_r2c', 'rf2tρθ',
-           'rfclamp', 's2g', 's2ts', 'sclamp', 'ts2s', 'tρθ2rf', 'uφrot']
+           'rfclamp', 's2g', 's2ts', 'sclamp', 'target_Mss', 'ts2s', 'tρθ2rf',
+           'uφrot']
 
 
 def ctrsub(shape: Any) -> Any:
@@ -357,3 +359,57 @@ def uϕrot(U: Tensor, Φ: Tensor, Vi: Tensor) -> Tensor:
           + sΦ*torch.cross(U.expand_as(Vi), Vi, dim=dim))
 
     return Vo
+
+
+def target_Mss(
+    cube,
+    beta_iv: float, beta_ov: float, iv: Tensor, ov: Tensor, *,
+    weight_iv: float = 1.0, weight_ov: float = 1.0,
+    doEmbed: bool = True,
+    alpha: float = 15, TR: float = 55e-3
+) -> dict:
+    r"""Compute the target steady-state Magnetization profile before alpha excitation
+    Assuming the following sequence structure:
+        [beta-alpha-readout]xN_rep
+    where beta is a saturation preparation pulse and alpha is a non-selective excitation pulse.
+
+    Usage:
+        ``target = target_Mss(cube, 0, 90, iv_mask, ov_mask, alpha=20, TR=80e-3)``
+
+    Inputs:
+        - ``cube``: mrphy.mobjs.SpinCube object.
+        - ``beta_iv``: target inner-volume beta flip angle, in [deg]
+        - ``beta_ov``: target outer-volume beta flip angle, in [deg]
+        - ``iv``: inner-volume mask, [nbatch,*nM]
+        - ``ov``: outer-volume mask, [nbatch,*nM]
+    Optionals:
+        - ``weight_iv``: weighting for iv region.
+        - ``weight_ov``: weighting for ov region.
+        - ``doEmbed``: [T/f], return embedded or compact form.
+        - ``alpha``: float, flip angle of excitation pulse, in [deg].
+        - ``TR``: float, repetition time, in [sec].
+    Outputs:
+        - ``target``: dict with keys:
+            - ``d``: target SS magnetization, [nbatch,*nM,xyz]
+            - ``weight``: region weights, [nbatch,*nM]
+    """
+    d = torch.zeros(iv.shape + (3,), device=cube.device)
+    M0 = cube.M[..., 2]  # (N,*nM)
+
+    beta = beta_iv * iv + beta_ov * ov  # (N,*nM)
+
+    E1 = torch.exp(-TR / cube.T1)  # (N,*nM)
+
+    denom = 1 - torch.cos(torch.deg2rad(beta)) * math.cos(math.radians(alpha)) * E1
+    d[..., 2] = (M0 * (1 - E1)) / denom * torch.cos(torch.deg2rad(beta))
+    d[..., 0] = (M0 * (1 - E1)) / denom * torch.sin(torch.deg2rad(beta))
+    d = d.nan_to_num()
+
+    weight = weight_iv * ov + weight_ov * iv
+    weight = weight[None, ...]
+
+    target = {
+        "d": (d if doEmbed else cube.extract(d)),
+        "weight": (weight if doEmbed else cube.extract(weight))
+    }
+    return target
