@@ -456,7 +456,7 @@ class SpinArray(object):
         loc: Optional[Tensor] = None, loc_: Optional[Tensor] = None,
         Δf: Optional[Tensor] = None, Δf_: Optional[Tensor] = None,
         b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None,
-        alpha: float=15, TR: float=55e-3
+        alpha: float=0, TR: float=55e-3
         ) -> Tensor:
         r"""Calculate the steady state(SS) magnetization in Spoiled Gradient-Recalled Echo (SPGR)
         Here the input "Pulse" object is generally treadted as a saturation preparation pulse (called 'beta'),
@@ -989,7 +989,7 @@ class SpinCube(SpinArray):
         self, pulse: Pulse, *,
         doEmbed: bool = False, doRelax: bool = True, doUpdate: bool = False, betaoff: bool = False,
         b1Map: Optional[Tensor] = None, b1Map_: Optional[Tensor] = None,
-        alpha: float=15, TR: float=55e-3
+        alpha: float=0, TR: float=55e-3
         ) -> Tensor:
         Mss_=self.spinarray.applypulse_ss(pulse,doEmbed=doEmbed,doRelax=doRelax, doUpdate=doUpdate,betaoff=betaoff,
                                         Δf_=self.Δf_, loc_=self.loc_,
